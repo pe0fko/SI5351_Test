@@ -298,7 +298,7 @@ prt_status()
 		/* 2
 		 * Reserved.
 		 */
-	}
+
 		/* 0-1
 		 * REVID[1:0] Revision number of the device.
 		 */
@@ -306,5 +306,5 @@ prt_status()
 			Serial.print(F(" REVID:")); 
 			Serial.print(reg_val & 0b00000011); 
 		}
-//	}
+	}
 }
