@@ -26,9 +26,10 @@
 Si5351			si5351;
 int32_t			cal_factor	= 0;
 int32_t			old_cal		= 0;
-si5351_drive	drive		= SI5351_DRIVE_8MA;
-uint8_t			xtal_load_c	= SI5351_CRYSTAL_LOAD_8PF;	// 0pF, 6pF, 8pF, 10pF
+si5351_drive	drive		= 0;			// 2mA, 4mA, 6mA, 8mA, 
+uint8_t			xtal_load_c	= 0;			// 0pF, 6pF, 8pF, 10pF
 uint64_t		rx_freq;
+bool			initialized	= false;
 
 //uint64_t target_freq = 500000000ULL;		// 10 MHz, in hundredths of hertz
 //uint64_t target_freq = 1000000000ULL;		// 10 MHz, in hundredths of hertz
@@ -39,7 +40,7 @@ uint64_t target_freq = 2000000000ULL; 		// 20 MHz, in hundredths of hertz
 
 static	void	vfo_interface(void);
 static	void	set_cal_freq();
-static	void	printHz();
+extern	void	printHz();
 static	void	prt_drive();
 static	void	prt_load();
 static	void	prt_status();
@@ -51,101 +52,99 @@ void setup()
 	Serial.begin(115200);
 	while (!Serial);
 	delay(2000);
-
-	// The crystal load value needs to match in order to have an accurate calibration
-	si5351.init(xtal_load_c, 0, 0);
-	set_cal_freq();
 }
 
 void loop()
 {
-	si5351.update_status();
-	if (si5351.dev_status.SYS_INIT == 1)
+	if (!initialized)
+	{
+		initialized = true;
+
+		Serial.println();
+		Serial.println(F("==== PE0FKO version SI5351 calibration routine."));
+		Serial.println(F("==== Compile at " __DATE__ " " __TIME__));
+		Serial.println(F("Adjust until your frequency counter reads as close to 10 MHz as possible."));
+		Serial.println(F("Press 'q' when complete."));
+
+		drive		= SI5351_DRIVE_8MA;
+		xtal_load_c	= SI5351_CRYSTAL_LOAD_8PF;
+		si5351.init(xtal_load_c, 0, 0);
+
+		cal_factor	= 0;
+		old_cal		= 0;
+		rx_freq		= target_freq;
+	//	cal_factor = old_cal;
+
+		Serial.println(F("   Up:   r   t   y   u   i   o   p   ]    }   1-4   6-9"));
+		Serial.println(F(" Down:   f   g   h   j   k   l   ;   [    {   Drive Load-C"));
+		Serial.println(F("   Hz: 0.01 0.1  1   10  100 1K  10K 100K 1M  2-8mA 0-10pF"));
+
+		set_cal_freq();
+	}
+
+	// Check if SI5351 is bussy initialising
+	uint8_t reg_val = si5351.si5351_read(SI5351_DEVICE_STATUS);
+	if (reg_val & 0b10000000)		//   status->SYS_INIT = (reg_val >> 7) & 0x01;
 	{
 		Serial.println(F("Initialising Si5351, you shouldn't see many of these!"));
 		delay(500);
 	}
-	else
+
+	if (Serial.available() > 0)
 	{
-		Serial.println();
-		Serial.println(F("Adjust until your frequency counter reads as close to 10 MHz as possible."));
-		Serial.println(F("Press 'q' when complete."));
 		vfo_interface();
 	}
 }
 
-static void flush_input(void)
-{
-	while (Serial.available() > 0)
-	Serial.read();
-}
-
 static void vfo_interface(void)
 {
-	rx_freq = target_freq;
-	cal_factor = old_cal;
-	Serial.println(F("   Up:   r   t   y   u   i   o  p   ]   }   1-4   6-9"));
-	Serial.println(F(" Down:   f   g   h   j   k   l  ;   [   {   Drive Load-C"));
-	Serial.println(F("   Hz: 0.01 0.1  1   10  100 1K 10K 100K 1M  2-8mA 0-10pF"));
-	while (1)
+	char c = Serial.read();
+	switch (c)
 	{
-		if (Serial.available() > 0)
-		{
-			char c = Serial.read();
-			switch (c)
-			{
-				case 'q':
-					flush_input();
-					Serial.print(F("Use: "));
-					set_cal_freq();
-					old_cal = cal_factor;
-					return;
-				case 'R':
-					si5351.init(xtal_load_c, 0, 0);
-					cal_factor	= 0;
-					old_cal		= 0;
-					drive		= SI5351_DRIVE_8MA;
-					xtal_load_c	= SI5351_CRYSTAL_LOAD_8PF;
-					rx_freq		= target_freq;
-					break;
-				case 'r': rx_freq += 1; break;			// 0.01 Hz
-				case 'f': rx_freq -= 1; break;
-				case 't': rx_freq += 10; break;			//  0.1 Hz
-				case 'g': rx_freq -= 10; break;
-				case 'y': rx_freq += 100; break;		//  1 Hz
-				case 'h': rx_freq -= 100; break;
-				case 'u': rx_freq += 1000; break;		//  10 Hz
-				case 'j': rx_freq -= 1000; break;
-				case 'i': rx_freq += 10000; break;		// 100 Hz
-				case 'k': rx_freq -= 10000; break;
-				case 'o': rx_freq += 100000; break;		//  1 KHz
-				case 'l': rx_freq -= 100000; break;
-				case 'p': rx_freq += 1000000; break;	// 10 KHz
-				case ';': rx_freq -= 1000000; break;
-
-				case ']': rx_freq = (target_freq += 100000000L); break;		// 1 MHz
-				case '[': rx_freq = (target_freq -= 100000000L); break;
-				case '}': rx_freq = (target_freq += 1000000000L); break;	// 10 MHz
-				case '{': rx_freq = (target_freq -= 1000000000L); break;
-
-				case '1': drive = SI5351_DRIVE_2MA; break;
-				case '2': drive = SI5351_DRIVE_4MA; break;
-				case '3': drive = SI5351_DRIVE_6MA; break;
-				case '4': drive = SI5351_DRIVE_8MA; break;
-
-				case '6': xtal_load_c = SI5351_CRYSTAL_LOAD_0PF; break;
-				case '7': xtal_load_c = SI5351_CRYSTAL_LOAD_6PF; break;
-				case '8': xtal_load_c = SI5351_CRYSTAL_LOAD_8PF; break;
-				case '9': xtal_load_c = SI5351_CRYSTAL_LOAD_10PF; break;
-
-				default:	continue;	// Do nothing
-			}
-
-			cal_factor = (int32_t)(target_freq - rx_freq) + old_cal;
-
+		case 'q':
+			Serial.print(F("Use: "));
 			set_cal_freq();
-		}
+			old_cal = cal_factor;
+			return;
+		case 'R':
+			initialized = false;
+			break;
+		case 'r': rx_freq += 1; break;			// 0.01 Hz
+		case 'f': rx_freq -= 1; break;
+		case 't': rx_freq += 10; break;			//  0.1 Hz
+		case 'g': rx_freq -= 10; break;
+		case 'y': rx_freq += 100; break;		//  1 Hz
+		case 'h': rx_freq -= 100; break;
+		case 'u': rx_freq += 1000; break;		//  10 Hz
+		case 'j': rx_freq -= 1000; break;
+		case 'i': rx_freq += 10000; break;		// 100 Hz
+		case 'k': rx_freq -= 10000; break;
+		case 'o': rx_freq += 100000; break;		//  1 KHz
+		case 'l': rx_freq -= 100000; break;
+		case 'p': rx_freq += 1000000; break;	// 10 KHz
+		case ';': rx_freq -= 1000000; break;
+
+		case ']': rx_freq = (target_freq += 100000000L); break;		// 1 MHz
+		case '[': rx_freq = (target_freq -= 100000000L); break;
+		case '}': rx_freq = (target_freq += 1000000000L); break;	// 10 MHz
+		case '{': rx_freq = (target_freq -= 1000000000L); break;
+
+		case '1': drive = SI5351_DRIVE_2MA; break;
+		case '2': drive = SI5351_DRIVE_4MA; break;
+		case '3': drive = SI5351_DRIVE_6MA; break;
+		case '4': drive = SI5351_DRIVE_8MA; break;
+
+		case '6': xtal_load_c = SI5351_CRYSTAL_LOAD_0PF; break;
+		case '7': xtal_load_c = SI5351_CRYSTAL_LOAD_6PF; break;
+		case '8': xtal_load_c = SI5351_CRYSTAL_LOAD_8PF; break;
+		case '9': xtal_load_c = SI5351_CRYSTAL_LOAD_10PF; break;
+
+		default:	return;		// Do nothing
 	}
+
+	cal_factor = (int32_t)(target_freq - rx_freq) + old_cal;
+
+	set_cal_freq();
 }
 
 static void 
@@ -160,7 +159,6 @@ set_cal_freq()
 	if (si5351.set_freq(target_freq, SI5351_CLK0))
 		Serial.print(F("ERROR: Frequency not set"));
 
-//	Serial.println();
 	Serial.print(F("Calibration: "));
 	Serial.print(cal_factor, DEC);
 	Serial.print(F(", 0x"));
@@ -169,9 +167,6 @@ set_cal_freq()
 	Serial.print((uint16_t)(target_freq / 100000000ULL));
 	Serial.print(F("MHz"));
 
-//	Serial.print(F(" "));
-//	printHz();
-
 	prt_drive();
 	prt_load();
 	prt_status();
@@ -179,6 +174,7 @@ set_cal_freq()
 	Serial.println();
 }
 
+#if 0
 static void
 printHz()
 {
@@ -197,6 +193,7 @@ printHz()
 	Serial.print(c);
 	Serial.print(F("Hz"));
 }
+#endif
 
 static void
 prt_drive()
